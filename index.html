@@ -322,6 +322,31 @@
         </form>
     </div>
 
+    <!-- ===================== FIREBASE ===================== -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <script>
+        // TODO: Replace with YOUR Firebase project's config (Firebase Console ->
+        // Project Settings -> General -> Your apps -> SDK setup and config).
+        // This MUST be the exact same config used in supervisor.html so both
+        // pages read/write the same database.
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        const FEEDBACK_COLLECTION = "feedback";
+        const AGENT_COLLECTION = "agentRoster";
+        const SUPPORT_COLLECTION = "supportRoster";
+    </script>
+    <!-- ======================================================= -->
+
     <script>
         const INITIAL_CREDITS = 4;
 
@@ -470,28 +495,58 @@
             { name: "Gemmalyn Silvestre", team: "Manila" }
         ];
 
-        if (!localStorage.getItem('agentRoster')) {
-            localStorage.setItem('agentRoster', JSON.stringify(defaultAgents));
-        }
+        // ---------------------------------------------------------------
+        // Live, in-memory mirrors of the Firestore collections. These are
+        // kept up to date automatically by onSnapshot() listeners below, so
+        // the rest of the app's logic can read them exactly like it used to
+        // read JSON.parse(localStorage.getItem(...)).
+        // ---------------------------------------------------------------
+        let agentsCache = [];
+        let supportCache = [];
+        let feedbackCache = [];
 
-        if (!localStorage.getItem('supportRoster')) {
-            localStorage.setItem('supportRoster', JSON.stringify(defaultRoster));
+        // NOTE: index.html intentionally does NOT seed default data into
+        // Firestore. supervisor.html owns roster management, so open it
+        // once (logged in as supervisor) first to seed the shared roster.
+        // This page just reads whatever is already in the database.
+        function attachRealtimeListeners() {
+            db.collection(AGENT_COLLECTION).onSnapshot(function(snap) {
+                agentsCache = snap.docs.map(d => d.data());
+                loadAgentDropdown();
+                checkAgentCredits();
+            }, function(err) { console.error('agentRoster listener error:', err); });
+
+            db.collection(SUPPORT_COLLECTION).onSnapshot(function(snap) {
+                supportCache = snap.docs.map(d => d.data());
+                loadSupportDropdown();
+            }, function(err) { console.error('supportRoster listener error:', err); });
+
+            db.collection(FEEDBACK_COLLECTION).onSnapshot(function(snap) {
+                feedbackCache = snap.docs.map(d => d.data());
+                checkAgentCredits();
+                checkSupportLimit();
+            }, function(err) { console.error('feedback listener error:', err); });
         }
 
         function loadAgentDropdown() {
-            const agents = JSON.parse(localStorage.getItem('agentRoster')) || defaultAgents;
+            const agents = agentsCache.length
+                ? agentsCache
+                : defaultAgents.map(a => ({ name: a.name, tl: a.supervisor, location: a.location }));
 
             const mnlGroup = document.getElementById('agent-opt-manila');
             const tucGroup = document.getElementById('agent-opt-tucson');
             const blrGroup = document.getElementById('agent-opt-bangalore');
             const canGroup = document.getElementById('agent-opt-canada');
 
+            // Preserve whatever the user has currently selected across live re-renders.
+            const currentVal = document.getElementById('agentUser').value;
+
             mnlGroup.innerHTML = '';
             tucGroup.innerHTML = '';
             blrGroup.innerHTML = '';
             canGroup.innerHTML = '';
 
-            agents.sort((a, b) => a.name.localeCompare(b.name)).forEach(agent => {
+            [...agents].sort((a, b) => a.name.localeCompare(b.name)).forEach(agent => {
                 const opt = document.createElement('option');
                 opt.value = agent.name;
                 opt.textContent = agent.name;
@@ -503,13 +558,17 @@
                 else if (loc.includes('canada') || loc.includes('mis')) canGroup.appendChild(opt);
                 else mnlGroup.appendChild(opt);
             });
+
+            if (currentVal) document.getElementById('agentUser').value = currentVal;
         }
 
         function loadSupportDropdown() {
-            const roster = JSON.parse(localStorage.getItem('supportRoster')) || defaultRoster;
+            const roster = supportCache.length ? supportCache : defaultRoster;
 
             const mnlGroup = document.getElementById('support-opt-manila');
             const tucGroup = document.getElementById('support-opt-tucson');
+
+            const currentVal = document.getElementById('supportPerson').value;
 
             mnlGroup.innerHTML = '';
             tucGroup.innerHTML = '';
@@ -522,6 +581,8 @@
                 if (member.team === 'Manila') mnlGroup.appendChild(opt);
                 else tucGroup.appendChild(opt);
             });
+
+            if (currentVal) document.getElementById('supportPerson').value = currentVal;
         }
 
         function handleAgentChange() {
@@ -559,8 +620,7 @@
 
         function getAgentRemainingCredits(agentName) {
             if (!agentName) return INITIAL_CREDITS;
-            const submissions = JSON.parse(localStorage.getItem('supportRatings')) || [];
-            const agentSubmissions = submissions.filter(s => s.agentUser.toLowerCase() === agentName.toLowerCase());
+            const agentSubmissions = feedbackCache.filter(s => (s.agentUser || '').toLowerCase() === agentName.toLowerCase());
             return Math.max(0, INITIAL_CREDITS - agentSubmissions.length);
         }
 
@@ -592,8 +652,7 @@
 
         function getPairSubmissionCount(agentName, supportName) {
             if (!agentName || !supportName) return 0;
-            const submissions = JSON.parse(localStorage.getItem('supportRatings')) || [];
-            return submissions.filter(s =>
+            return feedbackCache.filter(s =>
                 (s.agentUser || '').toLowerCase() === agentName.toLowerCase() &&
                 (s.supportName || '').toLowerCase() === supportName.toLowerCase()
             ).length;
@@ -670,9 +729,6 @@
 
         document.getElementById('customSupportInput').addEventListener('input', checkSupportLimit);
 
-        loadAgentDropdown();
-        loadSupportDropdown();
-
         document.getElementById('ratingForm').addEventListener('submit', function(e) {
             e.preventDefault();
 
@@ -695,7 +751,7 @@
                 selectedSupport = document.getElementById('customSupportInput').value.trim();
                 supportTeam = document.getElementById('customSupportTeam').value;
             } else {
-                const roster = JSON.parse(localStorage.getItem('supportRoster')) || defaultRoster;
+                const roster = supportCache.length ? supportCache : defaultRoster;
                 const personObj = roster.find(m => m.name === selectedSupport);
                 if (personObj) supportTeam = personObj.team;
             }
@@ -709,7 +765,7 @@
             const now = new Date();
             const dateISO = now.toISOString().split('T')[0];
             const yearStr = String(now.getFullYear());
-            
+
             const tempDate = new Date(now.valueOf());
             const dayNum = (now.getDay() + 6) % 7;
             tempDate.setDate(tempDate.getDate() - dayNum + 3);
@@ -736,18 +792,32 @@
                 comments: document.getElementById('notes').value.trim()
             };
 
-            const submissions = JSON.parse(localStorage.getItem('supportRatings')) || [];
-            submissions.unshift(newEntry);
-            localStorage.setItem('supportRatings', JSON.stringify(submissions));
+            const submitBtn = document.getElementById('submitBtn');
+            const originalBtnText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'SUBMITTING...';
 
-            alert(`Thank you! Your feedback has been recorded. You have ${creditsLeft - 1} credit(s) remaining.`);
-            this.reset();
-            document.getElementById('customAgentContainer').classList.add('hidden');
-            document.getElementById('customSupportContainer').classList.add('hidden');
-            document.getElementById('supportLimitNotice').classList.add('hidden');
-            checkAgentCredits();
-            checkSupportLimit();
+            db.collection(FEEDBACK_COLLECTION).doc(String(newEntry.id)).set(newEntry)
+                .then(() => {
+                    alert(`Thank you! Your feedback has been recorded. You have ${creditsLeft - 1} credit(s) remaining.`);
+                    this.reset();
+                    document.getElementById('customAgentContainer').classList.add('hidden');
+                    document.getElementById('customSupportContainer').classList.add('hidden');
+                    document.getElementById('supportLimitNotice').classList.add('hidden');
+                    checkAgentCredits();
+                    checkSupportLimit();
+                })
+                .catch((err) => {
+                    console.error('Error saving feedback:', err);
+                    alert('Sorry, something went wrong saving your feedback. Please check your internet connection and try again.');
+                })
+                .finally(() => {
+                    submitBtn.textContent = originalBtnText;
+                    submitBtn.disabled = creditsExhausted || supportLimitReached;
+                });
         });
+
+        attachRealtimeListeners();
     </script>
 </body>
 </html>
