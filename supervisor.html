@@ -834,10 +834,35 @@
         </div>
     </div>
 
+    <!-- ===================== FIREBASE ===================== -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <script>
+        // TODO: Replace with YOUR Firebase project's config (Firebase Console ->
+        // Project Settings -> General -> Your apps -> SDK setup and config).
+        // This MUST be the exact same config used in index.html so both pages
+        // read/write the same database.
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        const FEEDBACK_COLLECTION = "feedback";
+        const AGENT_COLLECTION = "agentRoster";
+        const SUPPORT_COLLECTION = "supportRoster";
+        const TL_COLLECTION = "teamLeadsRoster";
+    </script>
+    <!-- ======================================================= -->
+
     <script>
         const AUTH_PASS = "Verifone123";
         const BASE_MONTHLY_CREDITS = 4;
-        const FEEDBACK_KEY = "supportRatings";
 
         // Team Leads List
         const DEFAULT_TEAM_LEADS = [
@@ -982,6 +1007,18 @@
             { name: "William Potts", tl: "Nicole Garcia", location: "TUS - Tucson" }
         ];
 
+        // ---------------------------------------------------------------
+        // Live, in-memory mirrors of the Firestore collections. These are
+        // kept up to date automatically by onSnapshot() listeners, so the
+        // rest of the app's logic can read them exactly like it used to
+        // read JSON.parse(localStorage.getItem(...)).
+        // ---------------------------------------------------------------
+        let agentsCache = [];
+        let supportCache = [];
+        let teamLeadsCache = [];
+        let feedbackCache = [];
+        let listenersAttached = false;
+
         function authenticate() {
             const input = document.getElementById('passwordInput').value;
             if (input === AUTH_PASS) {
@@ -994,46 +1031,71 @@
         }
 
         function initDashboard() {
-            ensureInitialData();
             initTheme();
-            populateFilterOptions();
-            renderRosterManagement();
-            renderAgentRosterManagement();
-            renderTLList();
-            renderDashboard();
+            if (!listenersAttached) {
+                listenersAttached = true;
+                seedDefaultsIfEmpty()
+                    .catch(err => console.error('Seeding default data failed:', err))
+                    .finally(() => attachRealtimeListeners());
+            }
         }
 
-        function ensureInitialData() {
-            localStorage.setItem('teamLeadsRoster', JSON.stringify(DEFAULT_TEAM_LEADS));
-
-            // Seed the Support roster if it doesn't exist yet (fixes "Active Support (0)")
-            if (!localStorage.getItem('supportRoster')) {
-                localStorage.setItem('supportRoster', JSON.stringify(DEFAULT_SUPPORT_ROSTER));
+        // One-time seed: only writes defaults into a collection if that
+        // collection is completely empty (i.e. a brand-new Firebase
+        // project). Existing data - including anything a supervisor has
+        // added or edited - is never overwritten.
+        async function seedDefaultsIfEmpty() {
+            const tlSnap = await db.collection(TL_COLLECTION).limit(1).get();
+            if (tlSnap.empty) {
+                const batch = db.batch();
+                DEFAULT_TEAM_LEADS.forEach(tl => {
+                    batch.set(db.collection(TL_COLLECTION).doc(tl.name), tl);
+                });
+                await batch.commit();
             }
 
-            // Smart merge/sync: Update existing agents with new default TL mappings while keeping custom ones
-            let agents = JSON.parse(localStorage.getItem('agentRoster')) || [];
-            if (agents.length === 0) {
-                localStorage.setItem('agentRoster', JSON.stringify(DEFAULT_AGENTS));
-            } else {
-                const defaultMap = new Map(DEFAULT_AGENTS.map(a => [a.name.toLowerCase(), a]));
-                agents = agents.map(agent => {
-                    const def = defaultMap.get(agent.name.toLowerCase());
-                    if (def) {
-                        return { ...agent, tl: def.tl, location: def.location };
-                    }
-                    return agent;
+            const supportSnap = await db.collection(SUPPORT_COLLECTION).limit(1).get();
+            if (supportSnap.empty) {
+                const batch2 = db.batch();
+                DEFAULT_SUPPORT_ROSTER.forEach(m => {
+                    batch2.set(db.collection(SUPPORT_COLLECTION).doc(m.name), m);
                 });
-                
-                // Also add any missing agents from DEFAULT_AGENTS if not present
-                DEFAULT_AGENTS.forEach(defAgent => {
-                    if (!agents.some(a => a.name.toLowerCase() === defAgent.name.toLowerCase())) {
-                        agents.push(defAgent);
-                    }
-                });
-
-                localStorage.setItem('agentRoster', JSON.stringify(agents));
+                await batch2.commit();
             }
+
+            const agentSnap = await db.collection(AGENT_COLLECTION).limit(1).get();
+            if (agentSnap.empty) {
+                const batch3 = db.batch();
+                DEFAULT_AGENTS.forEach(a => {
+                    batch3.set(db.collection(AGENT_COLLECTION).doc(a.name), a);
+                });
+                await batch3.commit();
+            }
+        }
+
+        function attachRealtimeListeners() {
+            db.collection(TL_COLLECTION).onSnapshot(snap => {
+                teamLeadsCache = snap.docs.map(d => d.data());
+                renderTLList();
+                populateFilterOptions();
+            }, err => console.error('teamLeadsRoster listener error:', err));
+
+            db.collection(SUPPORT_COLLECTION).onSnapshot(snap => {
+                supportCache = snap.docs.map(d => d.data());
+                renderRosterManagement();
+            }, err => console.error('supportRoster listener error:', err));
+
+            db.collection(AGENT_COLLECTION).onSnapshot(snap => {
+                agentsCache = snap.docs.map(d => d.data());
+                renderAgentRosterManagement();
+                renderDashboard();
+            }, err => console.error('agentRoster listener error:', err));
+
+            db.collection(FEEDBACK_COLLECTION).onSnapshot(snap => {
+                feedbackCache = snap.docs.map(d => d.data());
+                populateFilterOptions();
+                renderDashboard();
+            }, err => console.error('feedback listener error:', err));
         }
 
         function toggleTheme() {
@@ -1118,45 +1180,39 @@
 
             if (!name) return alert('Please enter a Team Lead name.');
 
-            const tls = JSON.parse(localStorage.getItem('teamLeadsRoster')) || [];
-            if (tls.some(t => t.name.toLowerCase() === name.toLowerCase())) {
+            if (teamLeadsCache.some(t => t.name.toLowerCase() === name.toLowerCase())) {
                 return alert('Team Lead already exists.');
             }
 
-            tls.push({ name, site }); 
-            localStorage.setItem('teamLeadsRoster', JSON.stringify(tls));
-            nameInput.value = '';
-            renderTLList();
-            populateFilterOptions();
+            db.collection(TL_COLLECTION).doc(name).set({ name, site })
+                .then(() => { nameInput.value = ''; })
+                .catch(err => alert('Could not save Team Lead: ' + err.message));
         }
 
-        function deleteTeamLead(index) {
+        function deleteTeamLead(name) {
             if (!confirm('Are you sure you want to delete this Team Lead?')) return;
-            const tls = JSON.parse(localStorage.getItem('teamLeadsRoster')) || [];
-            tls.splice(index, 1);
-            localStorage.setItem('teamLeadsRoster', JSON.stringify(tls));
-            renderTLList();
-            populateFilterOptions();
+            db.collection(TL_COLLECTION).doc(name).delete()
+                .catch(err => alert('Could not remove Team Lead: ' + err.message));
         }
 
         function renderTLList() {
             const container = document.getElementById('tlListContainer');
-            const tls = JSON.parse(localStorage.getItem('teamLeadsRoster')) || [];
+            const tls = teamLeadsCache;
             container.innerHTML = '';
 
-            tls.forEach((tl, idx) => {
+            tls.forEach((tl) => {
                 const item = document.createElement('div');
                 item.className = 'roster-item';
                 item.innerHTML = `
                     <span><strong>${tl.name}</strong> (${tl.site})</span>
-                    <button class="btn-delete" onclick="deleteTeamLead(${idx})">Remove</button>
+                    <button class="btn-delete" onclick='deleteTeamLead("${tl.name.replace(/'/g, "\\'")}")'>Remove</button>
                 `;
                 container.appendChild(item);
             });
         }
 
         function populateFilterOptions() {
-            const tls = JSON.parse(localStorage.getItem('teamLeadsRoster')) || [];
+            const tls = teamLeadsCache;
             const agentSelect = document.getElementById('newAgentSupervisorSelect');
             const filterSelect = document.getElementById('tlFilter');
             const rosterTLFilter = document.getElementById('rosterTLFilter');
@@ -1179,7 +1235,7 @@
 
             const yearFilter = document.getElementById('yearFilter');
             const creditYearFilter = document.getElementById('creditYearFilter');
-            
+
             yearFilter.innerHTML = '<option value="ALL">All Years</option>';
             creditYearFilter.innerHTML = '<option value="ALL">All Years</option>';
 
@@ -1191,21 +1247,21 @@
 
         // --- SUPPORT ROSTER MANAGEMENT ---
         function renderRosterManagement() {
-            const roster = JSON.parse(localStorage.getItem('supportRoster')) || [];
+            const roster = supportCache;
             const search = (document.getElementById('searchSupportRoster').value || '').toLowerCase();
             const listContainer = document.getElementById('rosterList');
-            
+
             listContainer.innerHTML = '';
             const filtered = roster.filter(r => r.name.toLowerCase().includes(search));
-            
+
             document.getElementById('rosterCount').textContent = filtered.length;
 
-            filtered.forEach((member, index) => {
+            filtered.forEach((member) => {
                 const item = document.createElement('div');
                 item.className = 'roster-item';
                 item.innerHTML = `
                     <span><strong>${member.name}</strong> (${member.team})</span>
-                    <button class="btn-delete" onclick="deleteSupportMember(${index})">Remove</button>
+                    <button class="btn-delete" onclick='deleteSupportMember("${member.name.replace(/'/g, "\\'")}")'>Remove</button>
                 `;
                 listContainer.appendChild(item);
             });
@@ -1219,30 +1275,24 @@
 
             if (!name) return alert('Please enter a support member name.');
 
-            const roster = JSON.parse(localStorage.getItem('supportRoster')) || [];
-            if (roster.some(r => r.name.toLowerCase() === name.toLowerCase())) {
+            if (supportCache.some(r => r.name.toLowerCase() === name.toLowerCase())) {
                 return alert('Support member already exists.');
             }
 
-            roster.push({ name, team });
-            localStorage.setItem('supportRoster', JSON.stringify(roster));
-            nameInput.value = '';
-            renderRosterManagement();
-            renderDashboard();
+            db.collection(SUPPORT_COLLECTION).doc(name).set({ name, team })
+                .then(() => { nameInput.value = ''; })
+                .catch(err => alert('Could not save support member: ' + err.message));
         }
 
-        function deleteSupportMember(index) {
+        function deleteSupportMember(name) {
             if (!confirm('Remove member from active roster?')) return;
-            const roster = JSON.parse(localStorage.getItem('supportRoster')) || [];
-            roster.splice(index, 1);
-            localStorage.setItem('supportRoster', JSON.stringify(roster));
-            renderRosterManagement();
-            renderDashboard();
+            db.collection(SUPPORT_COLLECTION).doc(name).delete()
+                .catch(err => alert('Could not remove support member: ' + err.message));
         }
 
         // --- AGENT ROSTER MANAGEMENT ---
         function renderAgentRosterManagement() {
-            const agents = JSON.parse(localStorage.getItem('agentRoster')) || [];
+            const agents = agentsCache;
             const search = (document.getElementById('searchAgentRoster').value || '').toLowerCase();
             const tlFilter = document.getElementById('rosterTLFilter').value;
             const listContainer = document.getElementById('agentList');
@@ -1256,7 +1306,7 @@
 
             document.getElementById('agentCount').textContent = filtered.length;
 
-            filtered.forEach((agent, index) => {
+            filtered.forEach((agent) => {
                 const item = document.createElement('div');
                 item.className = 'roster-item';
                 item.innerHTML = `
@@ -1266,7 +1316,7 @@
                     </div>
                     <div class="roster-item-actions">
                         <button class="btn-edit" onclick='openEditAgentModal("${agent.name.replace(/'/g, "\\'")}")'>Edit</button>
-                        <button class="btn-delete" onclick="deleteAgentMember(${index})">Remove</button>
+                        <button class="btn-delete" onclick='deleteAgentMember("${agent.name.replace(/'/g, "\\'")}")'>Remove</button>
                     </div>
                 `;
                 listContainer.appendChild(item);
@@ -1277,14 +1327,13 @@
         let editingAgentOriginalName = null;
 
         function openEditAgentModal(name) {
-            const agents = JSON.parse(localStorage.getItem('agentRoster')) || [];
-            const agent = agents.find(a => a.name === name);
+            const agent = agentsCache.find(a => a.name === name);
             if (!agent) return;
 
             editingAgentOriginalName = agent.name;
             document.getElementById('editAgentNameDisplay').value = agent.name;
 
-            const tls = JSON.parse(localStorage.getItem('teamLeadsRoster')) || [];
+            const tls = teamLeadsCache;
             const tlSelect = document.getElementById('editAgentTLSelect');
             tlSelect.innerHTML = '<option value="">Select Team Lead / TL</option>';
             tls.forEach(tl => {
@@ -1303,17 +1352,13 @@
 
         function saveAgentEdit() {
             if (!editingAgentOriginalName) return;
-            const agents = JSON.parse(localStorage.getItem('agentRoster')) || [];
-            const idx = agents.findIndex(a => a.name === editingAgentOriginalName);
-            if (idx === -1) return;
 
-            agents[idx].tl = document.getElementById('editAgentTLSelect').value;
-            agents[idx].location = document.getElementById('editAgentLocationSelect').value;
+            const tl = document.getElementById('editAgentTLSelect').value;
+            const location = document.getElementById('editAgentLocationSelect').value;
 
-            localStorage.setItem('agentRoster', JSON.stringify(agents));
-            closeEditAgentModal();
-            renderAgentRosterManagement();
-            renderDashboard();
+            db.collection(AGENT_COLLECTION).doc(editingAgentOriginalName).update({ tl, location })
+                .then(() => closeEditAgentModal())
+                .catch(err => alert('Could not update agent: ' + err.message));
         }
 
         function addAgentMember() {
@@ -1327,34 +1372,27 @@
 
             if (!name) return alert('Please enter an agent name.');
 
-            const agents = JSON.parse(localStorage.getItem('agentRoster')) || [];
-            if (agents.some(a => a.name.toLowerCase() === name.toLowerCase())) {
+            if (agentsCache.some(a => a.name.toLowerCase() === name.toLowerCase())) {
                 return alert('Agent already exists.');
             }
 
-            agents.push({ name, tl, location });
-            localStorage.setItem('agentRoster', JSON.stringify(agents));
-            nameInput.value = '';
-            renderAgentRosterManagement();
-            renderDashboard();
+            db.collection(AGENT_COLLECTION).doc(name).set({ name, tl, location })
+                .then(() => { nameInput.value = ''; })
+                .catch(err => alert('Could not save agent: ' + err.message));
         }
 
-        function deleteAgentMember(index) {
+        function deleteAgentMember(name) {
             if (!confirm('Remove agent from active roster?')) return;
-            const agents = JSON.parse(localStorage.getItem('agentRoster')) || [];
-            agents.splice(index, 1);
-            localStorage.setItem('agentRoster', JSON.stringify(agents));
-            renderAgentRosterManagement();
-            renderDashboard();
+            db.collection(AGENT_COLLECTION).doc(name).delete()
+                .catch(err => alert('Could not remove agent: ' + err.message));
         }
 
         // --- FEEDBACK DATA (SHARED WITH index.html) ---
-        // index.html writes new submissions to the "supportRatings" key using
+        // index.html writes new submissions to the "feedback" collection using
         // fields like agentUser / dateISO. This normalizes that raw data into
         // the shape the rest of this dashboard expects (agentName, dateObj, etc).
         function loadFeedbackData() {
-            const raw = JSON.parse(localStorage.getItem(FEEDBACK_KEY)) || [];
-            return raw.map(item => {
+            return feedbackCache.map(item => {
                 let dateObj = item.dateISO ? new Date(item.dateISO) : new Date(item.timestamp);
                 if (isNaN(dateObj.getTime())) dateObj = new Date(item.timestamp);
                 return {
@@ -1477,7 +1515,7 @@
         }
 
         function renderAgentCredits() {
-            const agents = JSON.parse(localStorage.getItem('agentRoster')) || [];
+            const agents = agentsCache;
             const feedback = loadFeedbackData();
 
             const search = (document.getElementById('agentSearchInput').value || '').toLowerCase();
@@ -1517,8 +1555,8 @@
                 if (categoryFilter === 'MAX' && remaining > 0) return;
                 if (['1','2','3','4'].includes(categoryFilter) && remaining !== parseInt(categoryFilter)) return;
 
-                const statusBadge = remaining > 0 
-                    ? `<span class="badge badge-success">${remaining} Left</span>` 
+                const statusBadge = remaining > 0
+                    ? `<span class="badge badge-success">${remaining} Left</span>`
                     : `<span class="badge badge-danger">Maxed Out</span>`;
 
                 const tr = document.createElement('tr');
@@ -1706,8 +1744,6 @@
                     });
                 }
 
-
-
             } else {
                 const avgText = isNaN(data.avgRating) ? 'N/A' : `${data.avgRating.toFixed(2)} / 5.0`;
                 const breakdown = getRatingBreakdown(data.entries);
@@ -1729,8 +1765,6 @@
                     body += `\n${i + 1}. Support: ${item.supportName}  |  Rating: ${item.rating} / 5  |  Date: ${item.timestamp || ''}\n`;
                     body += `   Comment: ${item.comments ? `"${item.comments}"` : '(No written comment)'}\n`;
                 });
-
-  
             }
 
             const mailtoLink = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -1739,31 +1773,33 @@
 
         function deleteSingleFeedback(id) {
             if (!confirm('Are you sure you want to delete this log entry?')) return;
-            let feedback = JSON.parse(localStorage.getItem(FEEDBACK_KEY)) || [];
-            feedback = feedback.filter(f => f.id !== id);
-            localStorage.setItem(FEEDBACK_KEY, JSON.stringify(feedback));
-            renderDashboard();
+            db.collection(FEEDBACK_COLLECTION).doc(String(id)).delete()
+                .catch(err => alert('Could not delete entry: ' + err.message));
         }
 
-        function clearAllTestFeedback() {
+        async function clearAllTestFeedback() {
             if (!confirm('⚠️ WARNING: This will permanently delete ALL feedback submission logs! Continue?')) return;
-            localStorage.removeItem(FEEDBACK_KEY);
-            renderDashboard();
-        }
+            try {
+                const snap = await db.collection(FEEDBACK_COLLECTION).get();
+                let batch = db.batch();
+                let opCount = 0;
+                const commits = [];
 
-        // --- LIVE SYNC ACROSS TABS ---
-        // If index.html (open in another tab) submits new feedback, or the
-        // roster lists change, refresh this dashboard automatically.
-        window.addEventListener('storage', function(e) {
-            if (!document.getElementById('dashboard-content') || document.getElementById('dashboard-content').classList.contains('hidden')) return;
-            if ([FEEDBACK_KEY, 'supportRoster', 'agentRoster', 'teamLeadsRoster'].includes(e.key)) {
-                populateFilterOptions();
-                renderRosterManagement();
-                renderAgentRosterManagement();
-                renderTLList();
-                renderDashboard();
+                snap.docs.forEach(docSnap => {
+                    batch.delete(docSnap.ref);
+                    opCount++;
+                    if (opCount === 450) {
+                        commits.push(batch.commit());
+                        batch = db.batch();
+                        opCount = 0;
+                    }
+                });
+                commits.push(batch.commit());
+                await Promise.all(commits);
+            } catch (err) {
+                alert('Could not clear feedback logs: ' + err.message);
             }
-        });
+        }
     </script>
 </body>
 </html>
