@@ -337,8 +337,8 @@
                 <label for="notes">
                     <span>Notes &amp; Constructive Feedback:<span class="required-mark">*</span></span>
                 </label>
-                <textarea id="notes" required placeholder="Provide additional details regarding the assistance received... (minimum 30 words)"></textarea>
-                <p id="notesHint" class="notes-hint">Please provide at least 30 words of feedback (0 / 30 words so far).</p>
+                <textarea id="notes" required placeholder="Provide additional details regarding the assistance received... (minimum 20 words)"></textarea>
+                <p id="notesHint" class="notes-hint">Please provide at least 20 words of feedback (0 / 20 words so far).</p>
             </div>
 
             <button type="submit" id="submitBtn" class="btn-submit" disabled>SUBMIT FEEDBACK</button>
@@ -656,7 +656,7 @@
         // Feedback notes must contain at least MIN_NOTES_WORDS words before
         // the submit button is enabled. Starts true because the field
         // starts empty.
-        const MIN_NOTES_WORDS = 30;
+        const MIN_NOTES_WORDS = 20;
         let notesMissing = true;
 
         function updateSubmitButtonState() {
