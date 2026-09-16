@@ -134,6 +134,11 @@
             color: var(--text-main);
         }
 
+        .required-mark {
+            color: var(--danger-red);
+            margin-left: 3px;
+        }
+
         .credit-badge {
             font-size: 11px;
             padding: 2px 8px;
@@ -180,6 +185,21 @@
         textarea {
             height: 85px;
             resize: vertical;
+        }
+
+        textarea.notes-missing {
+            border-color: var(--danger-red);
+        }
+
+        .notes-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .notes-hint.notes-hint-warning {
+            color: var(--danger-red);
+            font-weight: 600;
         }
 
         .btn-submit {
@@ -314,11 +334,14 @@
             </div>
 
             <div class="form-group">
-                <label for="notes">Notes & Constructive Feedback:</label>
-                <textarea id="notes" placeholder="Provide additional details regarding the assistance received..."></textarea>
+                <label for="notes">
+                    <span>Notes &amp; Constructive Feedback:<span class="required-mark">*</span></span>
+                </label>
+                <textarea id="notes" required placeholder="Provide additional details regarding the assistance received..."></textarea>
+                <p id="notesHint" class="notes-hint">Please provide feedback details before submitting.</p>
             </div>
 
-            <button type="submit" id="submitBtn" class="btn-submit">SUBMIT FEEDBACK</button>
+            <button type="submit" id="submitBtn" class="btn-submit" disabled>SUBMIT FEEDBACK</button>
         </form>
     </div>
 
@@ -630,8 +653,32 @@
         let creditsExhausted = false;
         let supportLimitReached = false;
 
+        // Feedback notes must contain actual content before the submit
+        // button is enabled. Starts false because the field starts empty.
+        let notesMissing = true;
+
         function updateSubmitButtonState() {
-            document.getElementById('submitBtn').disabled = creditsExhausted || supportLimitReached;
+            document.getElementById('submitBtn').disabled = creditsExhausted || supportLimitReached || notesMissing;
+        }
+
+        function checkNotesProvided() {
+            const notesField = document.getElementById('notes');
+            const hint = document.getElementById('notesHint');
+            const hasContent = notesField.value.trim().length > 0;
+
+            notesMissing = !hasContent;
+
+            if (hasContent) {
+                notesField.classList.remove('notes-missing');
+                hint.textContent = 'Thanks for sharing your feedback!';
+                hint.classList.remove('notes-hint-warning');
+            } else {
+                notesField.classList.remove('notes-missing');
+                hint.textContent = 'Please provide feedback details before submitting.';
+                hint.classList.remove('notes-hint-warning');
+            }
+
+            updateSubmitButtonState();
         }
 
         function getSelectedAgentName() {
@@ -729,8 +776,26 @@
 
         document.getElementById('customSupportInput').addEventListener('input', checkSupportLimit);
 
+        // Live-validate the notes/feedback field as the agent types.
+        document.getElementById('notes').addEventListener('input', checkNotesProvided);
+
+        // Set the initial state of the notes hint/submit button on page load.
+        checkNotesProvided();
+
         document.getElementById('ratingForm').addEventListener('submit', function(e) {
             e.preventDefault();
+
+            // Extra safety net in case the button state ever gets out of sync -
+            // block submission if no feedback notes were entered.
+            const notesField = document.getElementById('notes');
+            if (notesField.value.trim().length === 0) {
+                checkNotesProvided();
+                notesField.classList.add('notes-missing');
+                document.getElementById('notesHint').classList.add('notes-hint-warning');
+                document.getElementById('notesHint').textContent = 'Feedback is required. Please describe your experience before submitting.';
+                notesField.focus();
+                return;
+            }
 
             let selectedAgent = document.getElementById('agentUser').value;
             if (selectedAgent === '__CUSTOM_AGENT__') {
@@ -806,6 +871,7 @@
                     document.getElementById('supportLimitNotice').classList.add('hidden');
                     checkAgentCredits();
                     checkSupportLimit();
+                    checkNotesProvided();
                 })
                 .catch((err) => {
                     console.error('Error saving feedback:', err);
@@ -813,7 +879,7 @@
                 })
                 .finally(() => {
                     submitBtn.textContent = originalBtnText;
-                    submitBtn.disabled = creditsExhausted || supportLimitReached;
+                    submitBtn.disabled = creditsExhausted || supportLimitReached || notesMissing;
                 });
         });
 
