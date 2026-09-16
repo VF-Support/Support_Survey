@@ -337,8 +337,8 @@
                 <label for="notes">
                     <span>Notes &amp; Constructive Feedback:<span class="required-mark">*</span></span>
                 </label>
-                <textarea id="notes" required placeholder="Provide additional details regarding the assistance received..."></textarea>
-                <p id="notesHint" class="notes-hint">Please provide feedback details before submitting.</p>
+                <textarea id="notes" required placeholder="Provide additional details regarding the assistance received... (minimum 30 words)"></textarea>
+                <p id="notesHint" class="notes-hint">Please provide at least 30 words of feedback (0 / 30 words so far).</p>
             </div>
 
             <button type="submit" id="submitBtn" class="btn-submit" disabled>SUBMIT FEEDBACK</button>
@@ -653,29 +653,37 @@
         let creditsExhausted = false;
         let supportLimitReached = false;
 
-        // Feedback notes must contain actual content before the submit
-        // button is enabled. Starts false because the field starts empty.
+        // Feedback notes must contain at least MIN_NOTES_WORDS words before
+        // the submit button is enabled. Starts true because the field
+        // starts empty.
+        const MIN_NOTES_WORDS = 30;
         let notesMissing = true;
 
         function updateSubmitButtonState() {
             document.getElementById('submitBtn').disabled = creditsExhausted || supportLimitReached || notesMissing;
         }
 
+        function countWords(text) {
+            const trimmed = text.trim();
+            if (!trimmed) return 0;
+            return trimmed.split(/\s+/).length;
+        }
+
         function checkNotesProvided() {
             const notesField = document.getElementById('notes');
             const hint = document.getElementById('notesHint');
-            const hasContent = notesField.value.trim().length > 0;
+            const wordCount = countWords(notesField.value);
+            const hasEnoughWords = wordCount >= MIN_NOTES_WORDS;
 
-            notesMissing = !hasContent;
+            notesMissing = !hasEnoughWords;
 
-            if (hasContent) {
-                notesField.classList.remove('notes-missing');
-                hint.textContent = 'Thanks for sharing your feedback!';
-                hint.classList.remove('notes-hint-warning');
+            notesField.classList.remove('notes-missing');
+            hint.classList.remove('notes-hint-warning');
+
+            if (hasEnoughWords) {
+                hint.textContent = `Thanks for sharing your feedback! (${wordCount} words)`;
             } else {
-                notesField.classList.remove('notes-missing');
-                hint.textContent = 'Please provide feedback details before submitting.';
-                hint.classList.remove('notes-hint-warning');
+                hint.textContent = `Please provide at least ${MIN_NOTES_WORDS} words of feedback (${wordCount} / ${MIN_NOTES_WORDS} words so far).`;
             }
 
             updateSubmitButtonState();
@@ -786,13 +794,15 @@
             e.preventDefault();
 
             // Extra safety net in case the button state ever gets out of sync -
-            // block submission if no feedback notes were entered.
+            // block submission if the feedback notes don't meet the minimum
+            // word count.
             const notesField = document.getElementById('notes');
-            if (notesField.value.trim().length === 0) {
+            const notesWordCount = countWords(notesField.value);
+            if (notesWordCount < MIN_NOTES_WORDS) {
                 checkNotesProvided();
                 notesField.classList.add('notes-missing');
                 document.getElementById('notesHint').classList.add('notes-hint-warning');
-                document.getElementById('notesHint').textContent = 'Feedback is required. Please describe your experience before submitting.';
+                document.getElementById('notesHint').textContent = `Feedback must be at least ${MIN_NOTES_WORDS} words (${notesWordCount} / ${MIN_NOTES_WORDS} words so far).`;
                 notesField.focus();
                 return;
             }
