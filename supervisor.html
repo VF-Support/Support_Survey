@@ -482,6 +482,51 @@
             border-radius: 0 6px 6px 0;
             font-size: 12px;
         }
+
+        /* --- TEAM SUMMARY STATS BAR --- */
+        .summary-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--input-bg);
+            border: 1px solid var(--card-border);
+            border-left: 4px solid var(--accent-teal);
+            border-radius: 8px;
+            padding: 14px 16px;
+        }
+
+        .stat-card .stat-label {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .stat-card .stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--primary-dark);
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+
+        .stat-card .stat-value .stat-unit {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .stat-card .stat-subtext {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -670,6 +715,30 @@
                         <div class="filter-item">
                             <label>End Date</label>
                             <input type="date" id="endDate" onchange="renderDashboard()">
+                        </div>
+                    </div>
+
+                    <!-- TEAM SUMMARY STATS (Manila / Tucson averages + agents submitted) -->
+                    <div class="summary-stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Manila Avg Rating</div>
+                            <div class="stat-value" id="statManilaAvg">N/A</div>
+                            <div class="stat-subtext" id="statManilaCount">0 submissions</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Tucson Avg Rating</div>
+                            <div class="stat-value" id="statTucsonAvg">N/A</div>
+                            <div class="stat-subtext" id="statTucsonCount">0 submissions</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Overall Avg Rating</div>
+                            <div class="stat-value" id="statOverallAvg">N/A</div>
+                            <div class="stat-subtext" id="statOverallCount">0 submissions</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Agents Submitted</div>
+                            <div class="stat-value" id="statAgentsSubmitted">0</div>
+                            <div class="stat-subtext">unique agents in current view</div>
                         </div>
                     </div>
 
@@ -1444,9 +1513,49 @@
                 return true;
             });
 
+            renderTeamSummaryStats(filteredFeedback);
             renderSupportSummary(filteredFeedback);
             renderDetailedAuditLog(filteredFeedback);
             renderAgentCredits();
+        }
+
+        // Renders the top summary bar: Manila / Tucson average ratings,
+        // an overall average, and how many unique agents submitted
+        // feedback within the currently filtered view.
+        function renderTeamSummaryStats(feedbackList) {
+            function avgFor(list) {
+                if (!list.length) return NaN;
+                return list.reduce((sum, f) => sum + parseFloat(f.rating || 0), 0) / list.length;
+            }
+
+            const manilaList = feedbackList.filter(f => f.team === 'Manila');
+            const tucsonList = feedbackList.filter(f => f.team === 'Tucson');
+
+            const manilaAvg = avgFor(manilaList);
+            const tucsonAvg = avgFor(tucsonList);
+            const overallAvg = avgFor(feedbackList);
+
+            document.getElementById('statManilaAvg').innerHTML = isNaN(manilaAvg)
+                ? 'N/A'
+                : `${manilaAvg.toFixed(2)}<span class="stat-unit">/ 5.0</span>`;
+            document.getElementById('statManilaCount').textContent = `${manilaList.length} submission${manilaList.length === 1 ? '' : 's'}`;
+
+            document.getElementById('statTucsonAvg').innerHTML = isNaN(tucsonAvg)
+                ? 'N/A'
+                : `${tucsonAvg.toFixed(2)}<span class="stat-unit">/ 5.0</span>`;
+            document.getElementById('statTucsonCount').textContent = `${tucsonList.length} submission${tucsonList.length === 1 ? '' : 's'}`;
+
+            document.getElementById('statOverallAvg').innerHTML = isNaN(overallAvg)
+                ? 'N/A'
+                : `${overallAvg.toFixed(2)}<span class="stat-unit">/ 5.0</span>`;
+            document.getElementById('statOverallCount').textContent = `${feedbackList.length} submission${feedbackList.length === 1 ? '' : 's'}`;
+
+            const uniqueAgents = new Set(
+                feedbackList
+                    .map(f => (f.agentName || '').trim().toLowerCase())
+                    .filter(name => name && name !== 'n/a')
+            );
+            document.getElementById('statAgentsSubmitted').textContent = uniqueAgents.size;
         }
 
         function renderSupportSummary(feedbackList) {
