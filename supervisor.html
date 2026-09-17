@@ -742,7 +742,17 @@
                         </div>
                     </div>
 
-                    <h3 style="color: var(--accent-teal); font-size: 16px; margin-bottom: 8px;">Support Performance Summary (Click name for comments)</h3>
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;">
+                        <h3 style="color: var(--accent-teal); font-size: 16px; margin: 0;">Support Performance Summary (Click name for comments)</h3>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <select id="exportTeamSelect" style="width: auto; min-width: 160px;">
+                                <option value="ALL">All Teams</option>
+                                <option value="Manila">Manila Only</option>
+                                <option value="Tucson">Tucson Only</option>
+                            </select>
+                            <button class="btn btn-sm" onclick="exportSupportSummaryToExcel()">📊 Export to Excel</button>
+                        </div>
+                    </div>
                     <table>
                         <thead>
                             <tr>
@@ -903,6 +913,8 @@
         </div>
     </div>
 
+    <!-- ===================== EXCEL EXPORT (SheetJS) ===================== -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <!-- ===================== FIREBASE ===================== -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -1878,6 +1890,75 @@
 
             const mailtoLink = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
             window.location.href = mailtoLink;
+        }
+
+        // --- EXCEL EXPORT (Support Performance Summary) ---
+        // Exports the average rating per support person to an .xlsx file.
+        // The team dropdown next to the export button lets the supervisor
+        // choose Manila only, Tucson only, or both. The existing Year /
+        // Month / Start / End date filters above are respected as well, so
+        // the export always matches what the on-screen summary shows.
+        function exportSupportSummaryToExcel() {
+            if (typeof XLSX === 'undefined') {
+                alert('Excel export library failed to load. Please check your internet connection and try again.');
+                return;
+            }
+
+            const exportTeam = document.getElementById('exportTeamSelect').value;
+            const yearFilter = document.getElementById('yearFilter').value;
+            const monthFilter = document.getElementById('monthFilter').value;
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+
+            const feedback = loadFeedbackData();
+
+            const filtered = feedback.filter(item => {
+                const itemDate = item.dateObj;
+                if (exportTeam !== 'ALL' && item.team !== exportTeam) return false;
+                if (yearFilter !== 'ALL' && itemDate.getFullYear().toString() !== yearFilter) return false;
+                if (monthFilter !== 'ALL' && (itemDate.getMonth() + 1).toString().padStart(2, '0') !== monthFilter) return false;
+                if (startDate && itemDate < new Date(startDate)) return false;
+                if (endDate && itemDate > new Date(endDate + 'T23:59:59')) return false;
+                return true;
+            });
+
+            const stats = {};
+            filtered.forEach(item => {
+                if (!stats[item.supportName]) {
+                    stats[item.supportName] = { team: item.team, count: 0, totalRating: 0 };
+                }
+                stats[item.supportName].count++;
+                stats[item.supportName].totalRating += parseFloat(item.rating || 0);
+            });
+
+            if (Object.keys(stats).length === 0) {
+                alert('No feedback records found for the selected team/filters.');
+                return;
+            }
+
+            const rows = Object.keys(stats).map(name => {
+                const s = stats[name];
+                const avg = s.count ? (s.totalRating / s.count) : 0;
+                return {
+                    "Support Name": name,
+                    "Team": s.team,
+                    "Total Submissions": s.count,
+                    "Average Rating": Number(avg.toFixed(2))
+                };
+            }).sort((a, b) => b["Average Rating"] - a["Average Rating"]);
+
+            const ws = XLSX.utils.json_to_sheet(rows);
+            ws['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 16 }];
+
+            const wb = XLSX.utils.book_new();
+            const sheetName = exportTeam === 'ALL' ? 'All Teams' : exportTeam;
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+            const now = new Date();
+            const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            const filename = `Support_Performance_${sheetName.replace(/\s+/g, '_')}_${stamp}.xlsx`;
+
+            XLSX.writeFile(wb, filename);
         }
 
         function deleteSingleFeedback(id) {
