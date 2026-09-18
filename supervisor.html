@@ -929,6 +929,7 @@
                         <option value="Manila">Manila</option>
                     </select>
                 </div>
+                <p style="font-size: 11px; color: var(--text-muted); margin: 0;">Renaming will also update any past feedback submissions already recorded under this member's previous name.</p>
                 <button class="btn" style="width: 100%; margin-top: 8px;" onclick="saveSupportEdit()">Save Changes</button>
             </div>
         </div>
@@ -1363,11 +1364,12 @@
 
             const newName = document.getElementById('editTLNameInput').value.trim();
             const site = document.getElementById('editTLSiteSelect').value;
+            const oldName = editingTLOriginalName;
 
             if (!newName) return alert('Team Lead name cannot be empty.');
 
             // Name unchanged - just update the site on the same doc.
-            if (newName === editingTLOriginalName) {
+            if (newName === oldName) {
                 db.collection(TL_COLLECTION).doc(newName).set({ name: newName, site })
                     .then(() => closeEditTLModal())
                     .catch(err => alert('Could not update Team Lead: ' + err.message));
@@ -1381,11 +1383,11 @@
             // Renaming a TL means every agent pointing at the old name needs
             // to be repointed at the new one, otherwise they'd silently lose
             // their TL link.
-            const affectedAgents = agentsCache.filter(a => a.tl === editingTLOriginalName);
+            const affectedAgents = agentsCache.filter(a => a.tl === oldName);
 
             const batch = db.batch();
             batch.set(db.collection(TL_COLLECTION).doc(newName), { name: newName, site });
-            batch.delete(db.collection(TL_COLLECTION).doc(editingTLOriginalName));
+            batch.delete(db.collection(TL_COLLECTION).doc(oldName));
             affectedAgents.forEach(a => {
                 batch.update(db.collection(AGENT_COLLECTION).doc(a.name), { tl: newName });
             });
@@ -1477,7 +1479,7 @@
                 .catch(err => alert('Could not remove support member: ' + err.message));
         }
 
-        // --- SUPPORT EDIT (rename / change team) ---
+        // --- SUPPORT EDIT (rename / change team, with feedback backfill) ---
         let editingSupportOriginalName = null;
 
         function openEditSupportModal(name) {
@@ -1500,25 +1502,31 @@
 
             const newName = document.getElementById('editSupportNameInput').value.trim();
             const newTeam = document.getElementById('editSupportTeamSelect').value;
+            const oldName = editingSupportOriginalName;
 
             if (!newName) return alert('Name cannot be empty.');
 
-            // Name unchanged, just update the team on the same doc.
-            if (newName === editingSupportOriginalName) {
+            // Name unchanged - just update the team on the same doc, and
+            // also refresh the "team" field on any past feedback rows so
+            // team-based filters/summary stay in sync.
+            if (newName === oldName) {
                 db.collection(SUPPORT_COLLECTION).doc(newName).set({ name: newName, team: newTeam })
+                    .then(() => backfillFeedbackField('supportName', oldName, newName, { team: newTeam }))
                     .then(() => closeEditSupportModal())
                     .catch(err => alert('Could not update support member: ' + err.message));
                 return;
             }
 
             // Name changed -> doc ID must change too (doc ID = name), so
-            // create the new doc then delete the old one.
+            // create the new doc, delete the old one, then backfill every
+            // historical feedback record that referenced the old name.
             if (supportCache.some(r => r.name.toLowerCase() === newName.toLowerCase())) {
                 return alert('A support member with that name already exists.');
             }
 
             db.collection(SUPPORT_COLLECTION).doc(newName).set({ name: newName, team: newTeam })
-                .then(() => db.collection(SUPPORT_COLLECTION).doc(editingSupportOriginalName).delete())
+                .then(() => db.collection(SUPPORT_COLLECTION).doc(oldName).delete())
+                .then(() => backfillFeedbackField('supportName', oldName, newName, { team: newTeam }))
                 .then(() => closeEditSupportModal())
                 .catch(err => alert('Could not rename support member: ' + err.message));
         }
@@ -1556,7 +1564,7 @@
             });
         }
 
-        // --- AGENT EDIT (Name / TL / Location) ---
+        // --- AGENT EDIT (Name / TL / Location, with feedback backfill) ---
         let editingAgentOriginalName = null;
 
         function openEditAgentModal(name) {
@@ -1589,25 +1597,30 @@
             const newName = document.getElementById('editAgentNameDisplay').value.trim();
             const tl = document.getElementById('editAgentTLSelect').value;
             const location = document.getElementById('editAgentLocationSelect').value;
+            const oldName = editingAgentOriginalName;
 
             if (!newName) return alert('Agent name cannot be empty.');
 
             // Name unchanged, just update TL / location on the same doc.
-            if (newName === editingAgentOriginalName) {
-                db.collection(AGENT_COLLECTION).doc(editingAgentOriginalName).update({ tl, location })
+            // TL/location aren't stored on feedback rows, so no backfill
+            // is needed here.
+            if (newName === oldName) {
+                db.collection(AGENT_COLLECTION).doc(oldName).update({ tl, location })
                     .then(() => closeEditAgentModal())
                     .catch(err => alert('Could not update agent: ' + err.message));
                 return;
             }
 
             // Name changed -> doc ID must change too (doc ID = name), so
-            // create the new doc then delete the old one.
+            // create the new doc, delete the old one, then backfill every
+            // historical feedback record that referenced the old name.
             if (agentsCache.some(a => a.name.toLowerCase() === newName.toLowerCase())) {
                 return alert('An agent with that name already exists.');
             }
 
             db.collection(AGENT_COLLECTION).doc(newName).set({ name: newName, tl, location })
-                .then(() => db.collection(AGENT_COLLECTION).doc(editingAgentOriginalName).delete())
+                .then(() => db.collection(AGENT_COLLECTION).doc(oldName).delete())
+                .then(() => backfillFeedbackField('agentUser', oldName, newName))
                 .then(() => closeEditAgentModal())
                 .catch(err => alert('Could not rename agent: ' + err.message));
         }
@@ -1657,6 +1670,38 @@
                     comments: item.comments
                 };
             });
+        }
+
+        // Renames a value across every matching feedback document. Used when
+        // a roster member (support person or agent) is renamed, so past
+        // submissions stay consistent with the current roster instead of
+        // freezing the old name forever. extraFields lets a caller also
+        // patch other denormalized fields (e.g. "team") on the same rows.
+        async function backfillFeedbackField(fieldName, oldValue, newValue, extraFields) {
+            if (!oldValue || oldValue === newValue) return;
+
+            const snap = await db.collection(FEEDBACK_COLLECTION)
+                .where(fieldName, '==', oldValue)
+                .get();
+
+            if (snap.empty) return;
+
+            let batch = db.batch();
+            let opCount = 0;
+            const commits = [];
+
+            snap.docs.forEach(docSnap => {
+                const updateData = Object.assign({ [fieldName]: newValue }, extraFields || {});
+                batch.update(docSnap.ref, updateData);
+                opCount++;
+                if (opCount === 450) {
+                    commits.push(batch.commit());
+                    batch = db.batch();
+                    opCount = 0;
+                }
+            });
+            commits.push(batch.commit());
+            await Promise.all(commits);
         }
 
         // --- RATING VISUALS ---
