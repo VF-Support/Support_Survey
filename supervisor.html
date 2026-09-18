@@ -559,7 +559,7 @@
 
             <div id="supportRosterSection">
                 <h3 style="font-size: 15px; margin-bottom: 6px;">Manage Support Team</h3>
-                <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Add or remove active support personnel.</p>
+                <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Add, edit, or remove active support personnel.</p>
                 
                 <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
                     <input type="text" id="newName" placeholder="Support Full Name">
@@ -617,7 +617,7 @@
 
             <div id="tlRosterSection" class="hidden">
                 <h3 style="font-size: 15px; margin-bottom: 6px;">Manage Lead List</h3>
-                <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Add or remove active Team Leads.</p>
+                <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Add, edit, or remove active Team Leads.</p>
 
                 <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
                     <input type="text" id="newTLName" placeholder="Team Lead Full Name">
@@ -893,7 +893,7 @@
             <div style="display: flex; flex-direction: column; gap: 12px;">
                 <div>
                     <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Agent Name</label>
-                    <input type="text" id="editAgentNameDisplay" disabled style="background: var(--input-border); color: var(--text-main); opacity: 0.8;">
+                    <input type="text" id="editAgentNameDisplay">
                 </div>
                 <div>
                     <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Team Lead / TL</label>
@@ -909,6 +909,51 @@
                     </select>
                 </div>
                 <button class="btn" style="width: 100%; margin-top: 8px;" onclick="saveAgentEdit()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="editSupportModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 420px;">
+            <button class="modal-close" onclick="closeEditSupportModal()">✕</button>
+            <h3 style="color: var(--primary-dark); margin-bottom: 15px;">Edit Support Member</h3>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div>
+                    <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Full Name</label>
+                    <input type="text" id="editSupportNameInput">
+                </div>
+                <div>
+                    <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Team</label>
+                    <select id="editSupportTeamSelect">
+                        <option value="Tucson">Tucson</option>
+                        <option value="Manila">Manila</option>
+                    </select>
+                </div>
+                <button class="btn" style="width: 100%; margin-top: 8px;" onclick="saveSupportEdit()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="editTLModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 420px;">
+            <button class="modal-close" onclick="closeEditTLModal()">✕</button>
+            <h3 style="color: var(--primary-dark); margin-bottom: 15px;">Edit Team Lead</h3>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div>
+                    <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Full Name</label>
+                    <input type="text" id="editTLNameInput">
+                </div>
+                <div>
+                    <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Site</label>
+                    <select id="editTLSiteSelect">
+                        <option value="MNL - Manila">MNL - Manila</option>
+                        <option value="TUS - Tucson">TUS - Tucson</option>
+                        <option value="BLR - Bangalore">BLR - Bangalore</option>
+                        <option value="MIS - Canada">MIS - Canada</option>
+                    </select>
+                </div>
+                <p style="font-size: 11px; color: var(--text-muted); margin: 0;">Renaming will automatically update the Team Lead assignment on any agents currently linked to this name.</p>
+                <button class="btn" style="width: 100%; margin-top: 8px;" onclick="saveTLEdit()">Save Changes</button>
             </div>
         </div>
     </div>
@@ -1286,10 +1331,68 @@
                 item.className = 'roster-item';
                 item.innerHTML = `
                     <span><strong>${tl.name}</strong> (${tl.site})</span>
-                    <button class="btn-delete" onclick='deleteTeamLead("${tl.name.replace(/'/g, "\\'")}")'>Remove</button>
+                    <div class="roster-item-actions">
+                        <button class="btn-edit" onclick='openEditTLModal("${tl.name.replace(/'/g, "\\'")}")'>Edit</button>
+                        <button class="btn-delete" onclick='deleteTeamLead("${tl.name.replace(/'/g, "\\'")}")'>Remove</button>
+                    </div>
                 `;
                 container.appendChild(item);
             });
+        }
+
+        // --- TEAM LEAD EDIT (rename cascades to any linked agents) ---
+        let editingTLOriginalName = null;
+
+        function openEditTLModal(name) {
+            const tl = teamLeadsCache.find(t => t.name === name);
+            if (!tl) return;
+
+            editingTLOriginalName = tl.name;
+            document.getElementById('editTLNameInput').value = tl.name;
+            document.getElementById('editTLSiteSelect').value = tl.site;
+            document.getElementById('editTLModal').classList.remove('hidden');
+        }
+
+        function closeEditTLModal() {
+            document.getElementById('editTLModal').classList.add('hidden');
+            editingTLOriginalName = null;
+        }
+
+        function saveTLEdit() {
+            if (!editingTLOriginalName) return;
+
+            const newName = document.getElementById('editTLNameInput').value.trim();
+            const site = document.getElementById('editTLSiteSelect').value;
+
+            if (!newName) return alert('Team Lead name cannot be empty.');
+
+            // Name unchanged - just update the site on the same doc.
+            if (newName === editingTLOriginalName) {
+                db.collection(TL_COLLECTION).doc(newName).set({ name: newName, site })
+                    .then(() => closeEditTLModal())
+                    .catch(err => alert('Could not update Team Lead: ' + err.message));
+                return;
+            }
+
+            if (teamLeadsCache.some(t => t.name.toLowerCase() === newName.toLowerCase())) {
+                return alert('A Team Lead with that name already exists.');
+            }
+
+            // Renaming a TL means every agent pointing at the old name needs
+            // to be repointed at the new one, otherwise they'd silently lose
+            // their TL link.
+            const affectedAgents = agentsCache.filter(a => a.tl === editingTLOriginalName);
+
+            const batch = db.batch();
+            batch.set(db.collection(TL_COLLECTION).doc(newName), { name: newName, site });
+            batch.delete(db.collection(TL_COLLECTION).doc(editingTLOriginalName));
+            affectedAgents.forEach(a => {
+                batch.update(db.collection(AGENT_COLLECTION).doc(a.name), { tl: newName });
+            });
+
+            batch.commit()
+                .then(() => closeEditTLModal())
+                .catch(err => alert('Could not rename Team Lead: ' + err.message));
         }
 
         function populateFilterOptions() {
@@ -1342,7 +1445,10 @@
                 item.className = 'roster-item';
                 item.innerHTML = `
                     <span><strong>${member.name}</strong> (${member.team})</span>
-                    <button class="btn-delete" onclick='deleteSupportMember("${member.name.replace(/'/g, "\\'")}")'>Remove</button>
+                    <div class="roster-item-actions">
+                        <button class="btn-edit" onclick='openEditSupportModal("${member.name.replace(/'/g, "\\'")}")'>Edit</button>
+                        <button class="btn-delete" onclick='deleteSupportMember("${member.name.replace(/'/g, "\\'")}")'>Remove</button>
+                    </div>
                 `;
                 listContainer.appendChild(item);
             });
@@ -1369,6 +1475,52 @@
             if (!confirm('Remove member from active roster?')) return;
             db.collection(SUPPORT_COLLECTION).doc(name).delete()
                 .catch(err => alert('Could not remove support member: ' + err.message));
+        }
+
+        // --- SUPPORT EDIT (rename / change team) ---
+        let editingSupportOriginalName = null;
+
+        function openEditSupportModal(name) {
+            const member = supportCache.find(r => r.name === name);
+            if (!member) return;
+
+            editingSupportOriginalName = member.name;
+            document.getElementById('editSupportNameInput').value = member.name;
+            document.getElementById('editSupportTeamSelect').value = member.team;
+            document.getElementById('editSupportModal').classList.remove('hidden');
+        }
+
+        function closeEditSupportModal() {
+            document.getElementById('editSupportModal').classList.add('hidden');
+            editingSupportOriginalName = null;
+        }
+
+        function saveSupportEdit() {
+            if (!editingSupportOriginalName) return;
+
+            const newName = document.getElementById('editSupportNameInput').value.trim();
+            const newTeam = document.getElementById('editSupportTeamSelect').value;
+
+            if (!newName) return alert('Name cannot be empty.');
+
+            // Name unchanged, just update the team on the same doc.
+            if (newName === editingSupportOriginalName) {
+                db.collection(SUPPORT_COLLECTION).doc(newName).set({ name: newName, team: newTeam })
+                    .then(() => closeEditSupportModal())
+                    .catch(err => alert('Could not update support member: ' + err.message));
+                return;
+            }
+
+            // Name changed -> doc ID must change too (doc ID = name), so
+            // create the new doc then delete the old one.
+            if (supportCache.some(r => r.name.toLowerCase() === newName.toLowerCase())) {
+                return alert('A support member with that name already exists.');
+            }
+
+            db.collection(SUPPORT_COLLECTION).doc(newName).set({ name: newName, team: newTeam })
+                .then(() => db.collection(SUPPORT_COLLECTION).doc(editingSupportOriginalName).delete())
+                .then(() => closeEditSupportModal())
+                .catch(err => alert('Could not rename support member: ' + err.message));
         }
 
         // --- AGENT ROSTER MANAGEMENT ---
@@ -1404,7 +1556,7 @@
             });
         }
 
-        // --- AGENT EDIT (TL / Location) ---
+        // --- AGENT EDIT (Name / TL / Location) ---
         let editingAgentOriginalName = null;
 
         function openEditAgentModal(name) {
@@ -1434,12 +1586,30 @@
         function saveAgentEdit() {
             if (!editingAgentOriginalName) return;
 
+            const newName = document.getElementById('editAgentNameDisplay').value.trim();
             const tl = document.getElementById('editAgentTLSelect').value;
             const location = document.getElementById('editAgentLocationSelect').value;
 
-            db.collection(AGENT_COLLECTION).doc(editingAgentOriginalName).update({ tl, location })
+            if (!newName) return alert('Agent name cannot be empty.');
+
+            // Name unchanged, just update TL / location on the same doc.
+            if (newName === editingAgentOriginalName) {
+                db.collection(AGENT_COLLECTION).doc(editingAgentOriginalName).update({ tl, location })
+                    .then(() => closeEditAgentModal())
+                    .catch(err => alert('Could not update agent: ' + err.message));
+                return;
+            }
+
+            // Name changed -> doc ID must change too (doc ID = name), so
+            // create the new doc then delete the old one.
+            if (agentsCache.some(a => a.name.toLowerCase() === newName.toLowerCase())) {
+                return alert('An agent with that name already exists.');
+            }
+
+            db.collection(AGENT_COLLECTION).doc(newName).set({ name: newName, tl, location })
+                .then(() => db.collection(AGENT_COLLECTION).doc(editingAgentOriginalName).delete())
                 .then(() => closeEditAgentModal())
-                .catch(err => alert('Could not update agent: ' + err.message));
+                .catch(err => alert('Could not rename agent: ' + err.message));
         }
 
         function addAgentMember() {
